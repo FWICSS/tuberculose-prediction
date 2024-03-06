@@ -1,0 +1,1252 @@
+#!/usr/bin/env python
+from __future__ import print_function
+import os, sys, argparse, re, uuid, subprocess, tempfile
+from Bio import SeqIO
+from Bio.Blast.Applications import NcbiblastnCommandline
+
+parser = argparse.ArgumentParser(description='Calculate the number and position of Miru/Spoligo sequences from a FASTA file, output results \
+                    to a file, and print octal Spoligo results, Miru results, and lineage results to screen.')
+parser.add_argument(dest='fasta_file', help='This is the path to the fasta file for which miru data is required.')
+parser.add_argument('-o', '--outdir', default=os.getcwd(),
+                    help='Output directory. Defaults to the current working directory.')
+parser.add_argument('-n', '--run-name',
+                    help='the sample name. Defaults to the input file name')
+parser.add_argument('-m24', '--miru24', action='store_true', default=False, dest='miru24',
+                    help='Will return the MIRU24 output instead of the MIRU12 output.')
+parser.add_argument('-p', '--partial', action='store_false', default=True, dest='partial',
+                    help='Will include any partial 100%%> miru >50%% in the ordinal repeat count (Default does not include these).')
+parser.add_argument('-u', '--unconventional', action='store_true', default=False, dest='miru2_24',
+                    help='If this flag is specified by the user, the counts will include the unconventional cases of miru 2 and miru 24 \
+                    which have a conserved region, followed by 24 bp, then another conserved region.')
+args = parser.parse_args()
+
+# Pre-Defined Variables/Paths
+flags = '(none)'
+if args.miru24 == True:
+    flags.replace('(none)', '')
+    flags += '--miru24'
+if args.partial == False:
+    flags.replace('(none)', '')
+    flags += '--partial'
+if args.miru2_24 == True:
+    flags.replace('(none)', '')
+    flags += '--unconventional'
+
+tmpdir = tempfile.TemporaryDirectory()
+path_dir = tmpdir.name
+output_path = args.outdir + os.sep
+try:
+    os.mkdir(output_path)
+except OSError:
+    pass
+
+if not args.run_name:
+    args.run_name = os.path.splitext(os.path.basename(args.fasta_file))[0]
+
+canetti_Check = 0
+
+# Pre-Defined Lists
+miru_Order = ['miru02', 'miru04', 'miru10', 'miru16', 'miru20', 'miru23', 'miru24', 'miru26', 'miru27', 'miru31',
+              'miru39', 'miru40', 'Mtub04', 'ETRC', 'Mtub21', 'Qub11b', 'ETRA', 'Mtub29', 'Mtub30', 'ETRB', 'Mtub34',
+              'Mtub39', 'QUB26', 'QUB4156']
+
+spacer_Order = ['spacers_str01', 'spacers_str02', 'spacers_str03', 'spacers_str04', 'spacers_str05', 'spacers_str06',
+                'spacers_str07', 'spacers_str08', 'spacers_str09', 'spacers_str10', 'spacers_str11', 'spacers_str12',
+                'spacers_str13', 'spacers_str14', 'spacers_str15', 'spacers_str16', 'spacers_str17', 'spacers_str18',
+                'spacers_str19', 'spacers_str20', 'spacers_str21', 'spacers_str22', 'spacers_str23', 'spacers_str24',
+                'spacers_str25', 'spacers_str26', 'spacers_str27', 'spacers_str28', 'spacers_str29', 'spacers_str30',
+                'spacers_str31', 'spacers_str32', 'spacers_str33', 'spacers_str34', 'spacers_str35', 'spacers_str36',
+                'spacers_str37', 'spacers_str38', 'spacers_str39', 'spacers_str40', 'spacers_str41', 'spacers_str42',
+                'spacers_str43']
+
+# Pre-Defined Dictionaries
+miru_Dict = {'miru02b': 'ATGACTCGCGCCGGCGACGATGCACAGCGAAGCGATGAGGAGGAGCGGCGCCT',
+             'miru02c': 'ATGACTCGCGCCAGCGACGATGCACAGCGAAGCGATGAGGAGGAGCGGCGCCT',
+             'miru02part1': 'TTGACCACACATGAGGTG',
+             'miru02part2': 'GAGCGGCGCCT',
+             'miru04': 'GATGACCTGCGCCGACGACGATGCAGAGCGTAGCGATGAGGTGGGGGCACCACCCGCTTGCGGGGGAGAGTGGCGCT',
+             'miru04b': 'GATGACCTGCGCCGACGACGATGCAGAGCGTAGCGATGAGGTGGGGGCACCACCCGCTTGCGGGGGGAGAGTGGCGCT',
+             'miru10': 'TGGCGCCGCTCCTCCTCATCGCTGCGCTCTGCATCGTCGCCGGCGGTAGTCAA',
+             'miru10b': 'TGGCGCCGCTCCTCCTCATCGCTGCGCTCTGCATCGTCGCCGGCGCGGGGGTCAT',
+             'miru16b': 'GTGAACCGCGCCGACGACGATGCAGAGCGAAGCGATGAGGAGGAGCGGCGCTC',
+             'miru16': 'GTGAGCCGCGCCGACGACGATGCAGAGCGAAGCGATGAGGAGGAGCGGCGCTC',
+             'miru20': 'ATGAGCCGCGCCGGCGACGATGCAGTGGGGGTACCGCCCGCTTGCGGGGGACGAAGCG',
+             'miru23': 'ATGCGCGCCGGTGACGATGCAGAGCGAAGCGATGAGGAGGAGCGGCGCAG',
+             'miru23b': 'ATGAGTCGCGCCGGTGACGATGCAGAGCGAAGCGATGAGGAGGAGCGGCGCAG',
+             'miru23c': 'ATGAGTCGCGCCGGTGACGATGCAGAGCGAAGCGATGAGCAGGAGCGGCGCAG',
+             'miru24b': 'TCGAAGCACCGCCGGCGACGATGCAGAGCGCAGCGATGCTGAGGAGCGGCGCCA',
+             'miru24': 'GTGACCGCGCCGGCGACGATGCAGAGCGCAGCGATGCTGAGGAGCGGCGCCA',
+             'miru24cpart1': 'TCGAAGCACCGCCGGCGACGATGCAGAGCGCAGCGATGCGGTG',
+             'miru24cpart2': 'GAGCGGCACCA',
+             'miru26b': 'TTGACCTCCGCCGGCGACGATGCAGAGCGCAGCGATGAGGAGGAGCGGCGC',
+             'miru26c': 'GTGACCTCCGCCGGCGACGATGCAGAGCGCAGCGATGAGGAGGAGCGGCGC',
+             'miru26': 'TTGACCTCCGCCGGCGACGATGCAGAGCGCAGCGATGAGGAGGAGCGGCGC',
+             'miru27b': 'TGGCGCCGCTCCTCCCCATCGCTTTGCTCTGCATCGTCGCCGGCGCGGGTCAC',
+             'miru27c': 'TGGCGCCGCTCCTCCCCATCGCTTTGCTCTGCATCGTCGCCGGCGCGGGTCAA',
+             'miru27': 'TGGCGCCGCTCCTCCCCATCGCTTTGCTCTGCATCGTCGCCGGCGCGGGTCAC',
+             'miru31': 'CTGCTTCGCGCCGGCGACGATGCAGAGCGCAGCGATGAGGAGGAGCGGCGCAG',
+             'miru31b': 'ATGGTTGGCGCCGGCGACGATGCAGAGCGCAGCGATGAGGAGGAGCGGCGCAG',
+             'miru39': 'GTGACCCGCGCCGGCGACGATGCAAAGCGCAGCGATGAGGAGGAGCGGCGCCA',
+             'miru39b': 'ACGGCCCGCGCCGGCGACGATGCAAAGCGCAGCGATGAGGAGGAGCGGCGCCA',
+             'miru39c': 'ACGGCCCGCGCCGGCGACGATGCAAAGCGCAGCGATGAGGAGGAGCGGCGCGC',
+             'miru40': 'CCGGCCTAGCCCGGCGACGATGCAGAGCGAAGCGATGAGGAGGAGCAGGGCAAT',
+             'miru40b': 'GCGGCCTAGCCCGGCGACGATGCAGAGCGAAGCGATGAGGAGGAGCAGGGCAAT',
+             'Mtub04': 'GCCGGTGAGCGAGCGCGCGTAGCGGGGGAGCGAACGGCGCAGTTGGCACCA',
+             'ETRC': 'GCCCGACGACGATGCAGAGCGCGCAGCGCGATGAGAAGGAGTTGGGCGGTTAGGTCGA',
+             'Mtub21': 'GTCTGATTGCCCGGTTCCTCCTCGCGCCGCAAACGGCGCGCATCGTCACCGGGCGTC',
+             'Qub11ba': 'ATCGGACCGACACCACCCAGCGCGTTCAGGCTCAACGGAATACCAGGAATAGTAATATCCGGCACCACA',
+             'Qub11bb': 'ATCGGACCGACACCACCCAGCGCGTTCAGGCTCAACGGAATACCAGGAATAGTAATATCAGGCACCACA',
+             'ETRA': 'CCGCCCACATCAATACCCAACGGGATTGCCGGAAGTGAGTAGCCATCCGGGAACACCGTAAACGGGCCTAACCCT',
+             'Mtub29a': 'GTGGCGACCCGCTGCACCCGGCTCCGCCGCGCTTGCGATCGCCACTGGACCCAACAA',
+             'Mtub29b': 'GTGGCGACCCGCCGCACCCGGCTCCGCCGCGCTTGCGATCGCCACTGGACCCAACAA',
+             'Mtub30a': 'TGATTGCCCGGCTCCTCCTCACCCCGTTACCCGGGGCGCATCGTCGCCGAGCTCGATT',
+             'Mtub30b': 'TGATTGCCTGGCTCCTCCTCACCCCGTTACCCGGGGCGCATCGTCGCCGAGCTCGATT',
+             'ETRB': 'AGCACAGCCCGGCGACGACCCGGGTCGGCACGACCCGGGAAGGAACCGGGCAAATCA',
+             'Mtub34': 'GGCGATCGCAAGCGCGGCGAAGCCGGGCGCAGCGGGTCGCCACCATCGGACACA',
+             'Mtub39a': 'AGCTCGGCGACGATGCACGCCGCGCAGCGGCGTGAGGAGGAGCCGAGCAGTCAAGCAC',
+             'Mtub39b': 'AGCTCGACGACGACCCACACCGCGCAGCGGCGTGAGGAGGAGCCGAGCAGTCCAACAC',
+             'Mtub39c': 'AGCTCGACGACGACCCACACCGCGCAGCGGCGTGAGGAGGAGCCGAGCAGTCAACAC',
+             'Mtub39d': 'AGCTCGACGACGACCCACACCGCGCAGCGGCGTGAGGAGGAGCCGAGCAGTCCAAGCAC',
+             'Mtub39e': 'AGCTCGGCGACGATGCACGCCGCGCAGCGGCGTGAGGAGGAGCCGAGCAGTCCAACAC',
+             'QUB26': 'GAGCCGGGTGCAGCGGGTCGCCACCATCAGCCCCGTGGCGATCGCAAACCCCGCGCCTGGCGACAATGCGGCCCGCAAAACGGGCCGAGGAGGAGCCAGGCAATCACCCCA',
+             'QUB4156': 'ACGCGGGCGACCCGCCGCACCCGGCGACAAGCGCCGAGCTTGCGATCGCCCTGAATCCA'}
+
+spacer_Dict = {'spacers_str01': 'ATAGAGGGTCGCCGGCTCTGGATCA',
+               'spacers_str02': 'CCTCATGCTTGGGCGACAGCTTTTG',
+               'spacers_str03': 'CCGTGCTTCCAGTGATCGCCTTCTA',
+               'spacers_str04': 'ACGTCATACGCCGACCAATCATCAG',
+               'spacers_str05': 'TTTTCTGACCACTTGTGCGGGATTA',
+               'spacers_str06': 'CGTCGTCATTTCCGGCTTCAATTTC',
+               'spacers_str07': 'GAGGAGAGCGAGTACTCGGGGCTGC',
+               'spacers_str08': 'CGTGAAACCGCCCCCAGCCTCGCCG',
+               'spacers_str09': 'ACTCGGAATCCCATGTGCTGACAGC',
+               'spacers_str10': 'TCGACACCCGCTCTAGTTGACTTCC',
+               'spacers_str11': 'GTGAGCAACGGCGGCGGCAACCTGG',
+               'spacers_str12': 'ATATCTGCTGCCCGCCCGGGGAGAT',
+               'spacers_str13': 'GACCATCATTGCCATTCCCTCTCCC',
+               'spacers_str14': 'GGTGTGATGCGGATGGTCGGCTCGG',
+               'spacers_str15': 'CTTGAATAACGCGCAGTGAATTTCG',
+               'spacers_str16': 'CGAGTTCCCGTCAGCGTCGTAAATC',
+               'spacers_str17': 'GCGCCGGCCCGCGCGGATGACTCCG',
+               'spacers_str18': 'CATGGACCCGGGCGAGCTGCAGATG',
+               'spacers_str19': 'TAACTGGCTTGGCGCTGATCCTGGT',
+               'spacers_str20': 'TTGACCTCGCCAGGAGAGAAGATCA',
+               'spacers_str21': 'TCGATGTCGATGTCCCAATCGTCGA',
+               'spacers_str22': 'ACCGCAGACGGCACGATTGAGACAA',
+               'spacers_str23': 'AGCATCGCTGATGCGGTCCAGCTCG',
+               'spacers_str24': 'CCGCCTGCTGGGTGAGACGTGCTCG',
+               'spacers_str25': 'GATCAGCGACCACCGCACCCTGTCA',
+               'spacers_str26': 'CTTCAGCACCACCATCATCCGGCGC',
+               'spacers_str27': 'GGATTCGTGATCTCTTCCCGCGGAT',
+               'spacers_str28': 'TGCCCCGGCGTTTAGCGATCACAAC',
+               'spacers_str29': 'AAATACAGGCTCCACGACACGACCA',
+               'spacers_str30': 'GGTTGCCCCGCGCCCTTTTCCAGCC',
+               'spacers_str31': 'TCAGACAGGTTCGCGTCGATCAAGT',
+               'spacers_str32': 'GACCAAATAGGTATCGGCGTGTTCA',
+               'spacers_str33': 'GACATGACGGCGGTGCCGCACTTGA',
+               'spacers_str34': 'AAGTCACCTCGCCCACACCGTCGAA',
+               'spacers_str35': 'TCCGTACGCTCGAAACGCTTCCAAC',
+               'spacers_str36': 'CGAAATCCAGCACCACATCCGCAGC',
+               'spacers_str37': 'CGCGAACTCGTCCACAGTCCCCCTT',
+               'spacers_str38': 'CGTGGATGGCGGATGCGTTGTGCGC',
+               'spacers_str39': 'GACGATGGCCAGTAAATCGGCGTGG',
+               'spacers_str40': 'CGCCATCTGTGCCTCATACAGGTCC',
+               'spacers_str41': 'GGAGCTTTCCGGCTTCTATCAGGTA',
+               'spacers_str42': 'ATGGTGGGACATGGACGAGCGCGAC',
+               'spacers_str43': 'CGCAGAATCGCACCGGGTGCGGGAG'}
+
+hsp65 = {
+    'hsp65': 'CGCCAAGGAGATCGAGCTGGAGGATCCGTACGAGAAGATCGGCGCCGAGCTGGTCAAAGAGGTAGCCAAGAAGACCGATGACGTCGCCGGTGACGGCACCACGACGGCCACCGTGCTGGCCCAGGCGTTGGTTCGCGAGGGCCTGCGCAACGTCGCGGCCGGCGCCAACCCGCTCGGTCTCAAACGCGGCATCGAAAAGGCCGTGGAGAAGGTCACCGAGACCCTGCTCAAGGGCGCCAAGGAGGTCGAGACCAAGGAGCAGATTGCGGCCACCGCAGCGATTTCGGCGGGTGACCAGTCCATCGGTGACCTGATCGCCGAGGCGATGGACAAGGTGGGCAACGAGGGCGTCATCACCGTCGAGGAGTCCAACACCTTTGGGCTGCAGCTCGAGCTCACCGA'}
+
+multi_Fasta_Dict = {}
+
+MIRU_10_and_above_dict = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9', 10: 'a', 11: 'b',
+                          12: 'c', 13: 'd',
+                          14: 'e', 15: 'f', 16: 'g', 17: 'h', 18: 'i', 19: 'j', 20: 'k', 21: 'l', 22: 'm', 23: 'n',
+                          24: 'o', 25: 'p',
+                          26: 'q', 27: 'r', 28: 's', 29: 't', 30: 'u', 31: 'v', 32: 'w', 33: 'x', 34: 'y', 35: 'z'}
+
+octal_code = {'000': '0', '001': '1', '010': '2', '011': '3', '100': '4', '101': '5', '110': '6', '111': '7'}
+
+
+# Functions
+def update_progress(progress, bar_length):
+    barLength = bar_length
+    status = ""
+    if isinstance(progress, int):
+        progress = float(progress)
+    if not isinstance(progress, float):
+        progress = 0
+        status = "error: progress var must be float\r\n"
+    if float(progress / barLength) < 0:
+        progress = 0
+        status = "Halt...\r\n"
+    if float(progress / barLength) >= 1:
+        progress = 1
+        status = "    Done.    \r\n"
+    block = int(round(progress))
+    text = "\rProgress: [{0}] {1:.1f}% {2}".format("#" * block + "-" * (barLength - block),
+                                                   float(progress / barLength) * 100, status)
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def blankFile(outputFile):
+    "Makes sure the file to start with exists and has nothing written in it"
+    g = open(outputFile, 'w')
+    g.write('')
+    g.close()
+
+
+def printToFile(item, outputfile, last=0):
+    "Print item to a file"
+    try:
+        with open(outputfile, "a") as myfile:
+            myfile.write(str(item) + '\t')
+            if last == 1:
+                myfile.write('\n')
+    except IOError:
+        blankFile(outputfile)
+        printToFile(item, outputfile, last)
+
+
+def BLAST(query_seq, subject_file, gene_name, threshold, output_List, lower='', upper=''):
+    "BLAST two sequences using biopython"
+    header = '>' + gene_name + '\n'
+    query_fasta = header + query_seq
+    blast_commandline = ''
+    qseq_length = len(query_seq)
+    query_range = '1-' + str(qseq_length)
+    if lower == '' or upper == '':
+        if len(query_seq) > 30:
+            blast_commandline = NcbiblastnCommandline(cmd='blastn', subject=str(subject_file), query_loc=query_range,
+                                                      outfmt=6)
+        else:
+            blast_commandline = NcbiblastnCommandline(cmd='blastn', subject=str(subject_file), query_loc=query_range,
+                                                      word_size=7, reward=1, penalty='-3', evalue=1000, outfmt=6)
+    else:
+        subject_location = str(int(lower) + 1) + '-' + str(int(upper) + 1)
+        if len(query_seq) > 30:
+            blast_commandline = NcbiblastnCommandline(cmd='blastn', subject=str(subject_file),
+                                                      subject_loc=subject_location,
+                                                      query_loc=query_range, outfmt=6)
+        else:
+            blast_commandline = NcbiblastnCommandline(cmd='blastn', subject=str(subject_file),
+                                                      subject_loc=subject_location,
+                                                      query_loc=query_range, word_size=7, reward=1, penalty='-3',
+                                                      evalue=1000, outfmt=6)
+    stdout, stderr = blast_commandline(stdin=query_fasta)
+    blasts = stdout.split('\n')
+    for line in blasts:
+        if line == '':
+            pass
+        else:
+            line = line.split('\t')
+            try:
+                line = endAdjustment(line, subject_fasta)
+            except:
+                pass
+            percentalign = (float(line[3]) /
+                            float(qseq_length))
+            if (percentalign >= float(threshold) and float(line[2]) >= float(threshold * 100)):
+                output_List.append([str(counter),
+                                    line[0], line[2], str(qseq_length), line[3], str(percentalign),
+                                    line[4], line[5], line[8], line[9], line[10]])
+
+
+def endAdjustment(hit, subject_fasta):
+    '''If the miru has a snp or indel 2 or 3 bp from the end, then BLAST won't classify it correctly, therefore this adjustment must be made'''
+    newHit = hit[0:len(hit)]
+    miru_seq = miru_Dict[hit[0]]
+    align_length = hit[3]
+    mismatch = hit[4]
+    gap_open = hit[5]
+    q_start = hit[6]
+    q_end = hit[7]
+    s_start = hit[8]
+    s_end = hit[9]
+    if int(align_length) == int(
+            len(miru_seq)) - 3:  # This applies to the third position from the end being a snp or indel 
+        if int(q_start) == 1 and int(q_end) == int(len(miru_seq) - 3) and subject_fasta[
+                                                                          int(s_end) + 1:int(s_end) + 3] == miru_seq[
+                                                                                                            int(len(
+                                                                                                                    miru_seq) - 2):len(
+                                                                                                                    miru_seq)]:  # The query fasta only matches from the first position to the fourth from the last and the last two positions in the query match the next two in the subject (i.e. the third position from the end is a snp)
+            newHit[3] = str(int(align_length) + 3)
+            newHit[4] = str(int(mismatch) + 1)
+            newHit[9] = str(int(s_end) + 3)
+        elif int(q_start) == 1 and int(q_end) == int(len(miru_seq)) - 3 and subject_fasta[
+                                                                            int(s_end):int(s_end) + 2] == miru_seq[int(
+                        len(miru_seq) - 2):len(
+                miru_seq)]:  # The query fasta only matches from the first position to the third from the last and the last two positions in the subject match the query (i.e. the third position from the end is a deletion)
+            newHit[3] = str(int(align_length) + 3)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[9] = str(int(s_end) + 2)
+        elif int(q_start) == 1 and int(q_end) == int(len(miru_seq)) - 3 and subject_fasta[
+                                                                            int(s_end) + 1:int(s_end) + 3] == miru_seq[
+                                                                                                              int(len(
+                                                                                                                      miru_seq) - 3):len(
+                                                                                                                      miru_seq)]:  # The query fasta only matches from the first position to the fourth from the last and the last two positions in the subject match the query (i.e. the third position from the end is an insertion)
+            newHit[3] = str(int(align_length) + 3)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[9] = str(int(s_end) + 4)
+        elif int(q_start) == 4 and int(q_end) == int(len(miru_seq)) and subject_fasta[
+                                                                        int(s_start) - 4:int(s_start) - 2] == miru_seq[
+                                                                                                              0:2]:  # The subject has a snp in the third position
+            newHit[3] = str(int(align_length) + 3)
+            newHit[4] = str(int(mismatch) + 1)
+            newHit[8] = str(int(s_start) - 3)
+        elif (int(q_start) == 4 and int(q_end) == int(len(miru_seq)) and subject_fasta[
+                                                                         int(s_start) - 3:int(s_start) - 1] == miru_seq[
+                                                                                                               0:2]):  # The subject has a deletion in the third position
+            newHit[3] = str(int(align_length) + 2)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[8] = str(int(s_start) - 2)
+    elif int(align_length) == int(len(miru_seq)) - 2:
+        if int(q_start) == 3 and int(q_end) == int(len(miru_seq)) and subject_fasta[
+                                                                      int(s_start) - 3:int(s_start) - 2] == miru_seq[
+                                                                                                            0:1]:  # The query fasta only matches from the third position to the len of seq, and the first position in the query matches the subject (i.e. the second position is a snp)
+            newHit[3] = str(int(align_length) + 2)
+            newHit[8] = str(int(s_start) - 2)
+        if int(q_start) == 3 and int(q_end) == int(len(miru_seq)) and subject_fasta[
+                                                                      int(s_start) - 2:int(s_start) - 1] == miru_seq[
+                                                                                                            0:1]:  # The query fasta only matches from the "third" position to the len of seq, and the first position in the query matches the subject (i.e. the second position is a deletion)
+            newHit[3] = str(int(align_length) + 2)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[8] = str(int(s_start) - 1)
+        if int(q_start) == 1 and int(q_end) == int(len(miru_seq)) - 2 and subject_fasta[
+                                                                          int(s_end) - 1:int(s_end)] == miru_seq[int(
+                        len(miru_seq) - 1):len(
+                miru_seq)]:  # The query fasta only matches from the first position to the second from the last and the last positions in the query matches the subject (i.e. the second position from the end is a snp)
+            newHit[3] = str(int(align_length) + 2)
+            newHit[9] = str(int(s_end) + 2)
+        elif int(q_start) == 1 and int(q_end) == int(len(miru_seq)) - 2 and subject_fasta[
+                                                                            int(s_end):int(s_end) + 1] == miru_seq[int(
+                        len(miru_seq) - 1):len(
+                miru_seq)]:  # The query fasta only matches from the first position to the third from the last and the last position in the subject matches the query (i.e. the second position from the end is a del)
+            newHit[3] = str(int(align_length) + 2)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[9] = str(int(s_end) + 1)
+    elif int(align_length) == int(len(miru_seq)) - 1:
+        if int(q_start) == 1 and int(q_end) == int(len(miru_seq) - 1) and subject_fasta[
+                                                                          int(s_end) + 1:int(s_end) + 2] == miru_seq[
+                                                                                                            int(len(
+                                                                                                                    miru_seq) - 1):len(
+                                                                                                                    miru_seq)]:  # The subject has an insertion at the second from last position in the seq
+            newHit[3] = str(int(align_length) + 1)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[9] = str(int(s_end) + 2)
+        if int(q_start) == 2 and int(q_end) == int(len(miru_seq)) and subject_fasta[
+                                                                      int(s_start) - 4:int(s_start) - 2] == miru_seq[
+                                                                                                            0:2]:  # The subject has an insertion at the second position in the seq
+            newHit[3] = str(int(align_length) + 2)
+            newHit[5] = str(int(gap_open) + 1)
+            newHit[8] = str(int(s_start) - 3)
+    return newHit
+
+
+def rid_duplicate_positions(List):
+    "Get rid of duplicates on the list which overlap exactly, \
+    keep only the one with the lowest evalue"
+    for i in range(len(List)):
+        for j in range(len(List)):
+            if i != j:
+                item1 = List[i]
+                percID1 = float(item1[5])
+                score1 = float(item1[-1])
+                item2 = List[j]
+                percID2 = float(item2[5])
+                score2 = float(item2[-1])
+                if int(item1[8]) < int(item1[9]):
+                    startpos1 = int(item1[8])
+                    endpos1 = int(item1[9])
+                else:
+                    startpos1 = int(item1[9])
+                    endpos1 = int(item1[8])
+                if int(item2[8]) < int(item2[9]):
+                    startpos2 = int(item2[8])
+                    endpos2 = int(item2[9])
+                else:
+                    startpos2 = int(item2[9])
+                    endpos2 = int(item2[8])
+                if (item1 == ['0'] * 11 or item2 == ['0'] * 11):
+                    continue
+                elif (startpos1 == startpos2 and endpos1 == endpos2):
+                    if score1 < score2:
+                        List[j] = ['0'] * 11
+                    elif score1 > score2:
+                        List[i] = ['0'] * 11
+                    elif score1 == score2:
+                        if percID1 > percID2:
+                            List[i] = ['0'] * 11
+                        elif percID2 > percID1:
+                            List[i] = ['0'] * 11
+                        elif percID2 == percID1:
+                            List[j] = ['0'] * 11
+                elif (startpos1 == endpos2 and endpos1 == startpos2):
+                    if score1 < score2:
+                        List[j] = ['0'] * 11
+                    elif score1 > score2:
+                        List[i] = ['0'] * 11
+                    elif score1 == score2:
+                        if percID1 > percID2:
+                            List[j] = ['0'] * 11
+                        elif percID2 > percID1:
+                            List[i] = ['0'] * 11
+                        elif percID2 == percID1:
+                            List[j] = ['0'] * 11
+    for item in List:
+        if item == ['0'] * 11:
+            List.remove(item)
+    return List
+
+
+def checkOverlap(item, listToCheck):
+    "Checks to make sure the item to be appended is not already in the list/does not overlap with existing values"
+    check = 0  # If the check stays 0, then add the positions to the list.
+    i = (len(listToCheck) - 1)
+    itemLength = abs(int(item[1]) - int(item[0]))
+    while i > 0:
+        if int(item[0]) == int(listToCheck[i][0]) and int(item[1]) == int(
+                listToCheck[i][1]):  # if the positions are already in the list, then change the check.
+            check = 1
+        if int(item[0]) < int(listToCheck[i][0]) < int(item[1]) < int(listToCheck[i][1]) and int(
+                listToCheck[i][0]) - int(item[0]) >= int(
+                    0.1 * (itemLength)):  # if the positions overlap by greater than 10%, but the ends aren't equal
+            check = 1
+        if int(listToCheck[i][0]) < int(item[0]) < int(listToCheck[i][1]) < int(item[1]) and int(
+                listToCheck[i][1]) - int(item[0]) >= int(
+                    0.1 * (itemLength)):  # if the positions overlap by greater than 10%, but the ends aren't equal
+            check = 1
+        if int(item[0]) == int(listToCheck[i][0]) and int(item[1]) != int(
+                listToCheck[i][1]):  # if the positions overlap and the start positions are equal.
+            check = 1
+        if int(item[0]) != int(listToCheck[i][0]) and int(item[1]) == int(
+                listToCheck[i][1]):  # if the positions overlap and the end positions are equal.
+            check = 1
+        if int(listToCheck[i][0]) < int(item[0]) < int(item[1]) < int(
+                listToCheck[i][1]):  # if the positions are both within the region to check
+            check = 1
+        if int(item[0]) < int(listToCheck[i][0]) < int(listToCheck[i][1]) < int(
+                item[1]):  # if the positions surround the region to check
+            check = 1
+        i -= 1
+    return check
+
+
+def checkIfInList(lowerBound, upperBound, lyst, i):
+    "Checks to see if the item is already in the list or not"
+    check = 0
+    while i > 0:
+        if lowerBound and upperBound in lyst:
+            check = 1
+            break  # if the positions are already in the list, then break out of the while loop. If the check stays 0, then add the positions to the list.
+        else:
+            i -= 1
+    return check
+
+
+def checkIfInRange(item, overlapItem):
+    check = 0
+    for i in range(int(item[0]), int(item[1])):
+        if i in range(int(overlapItem[0]), int(overlapItem[1])):
+            check = 1
+            break
+    return check
+
+
+def is_number(num):
+    check = 0
+    try:
+        float(num)
+    except ValueError:
+        check = 1
+    return check
+
+
+def concatenate_multifasta(fasta_file, output_file):
+    """Creates a single sequence FASTA-formatted file"""
+    header = subprocess.Popen("awk 'NR == 1' " + fasta_file, shell=True, stdout=subprocess.PIPE, text=True).stdout.read()
+    fasta_string = subprocess.Popen("grep -v '>' " + fasta_file, shell=True,
+                                    text=True,
+                                    stdout=subprocess.PIPE).stdout.read() + '\n'
+    with open(output_file, 'w') as output_filehandle:
+        output_filehandle.write('\n'.join([header, fasta_string]))
+
+
+fasta_string = subprocess.Popen("grep '>' " + args.fasta_file, shell=True,
+                                text=True,
+                                stdout=subprocess.PIPE).stdout.read()
+if len(fasta_string.split('\n')) > 3:
+    input_fasta = tempfile.mkstemp()[1]
+    concatenate_multifasta(args.fasta_file, input_fasta)
+else:
+    input_fasta = args.fasta_file
+
+# Open the fasta file and parse the fasta sequences using biopython
+with open(input_fasta, 'r') as handle:
+    for record in SeqIO.parse(input_fasta, "fasta"):
+        multi_Fasta_Dict[record.id] = record.seq
+
+progress_length = int(len(multi_Fasta_Dict) * 8 + 1)
+progress = 0
+update_progress(progress, progress_length)
+
+# Establish file headers
+lineage_Title_Seq = ('FilePath', 'Flags', 'RunName', 'SpoligoType', 'MiruType', 'Lineage')
+positions_Title_Seq = (
+'MiruRegion', '[#Repeats, #PartialRepeats, ([StartPosition, EndPosition, (Partial%)], sub-fastaHeader)]')
+lineage_Title = '\t'.join(lineage_Title_Seq)
+positions_Title = '\t'.join(positions_Title_Seq)
+blankFile(output_path + args.run_name + ".summary.tsv")
+blankFile(output_path + args.run_name + ".positions.tsv")
+printToFile(lineage_Title, output_path + args.run_name + ".summary.tsv", last=1)
+printToFile(positions_Title, output_path + args.run_name + ".positions.tsv", last=1)
+
+# The counter applies to multi-seq fastas, and increments for each sub-fasta
+counter = 0
+multiFastaMIRU = {}
+multiFastaSpoligo = {}
+for fasta_Header in multi_Fasta_Dict:
+    counter += 1
+    miru_List = []
+    spacer_List = []
+    subject_fasta = str(multi_Fasta_Dict[fasta_Header])
+    subject_path = str(path_dir) + '/subject_' + str(counter) + '.fasta'
+    blankFile(subject_path)
+    printToFile('>' + str(fasta_Header) + '\n' + subject_fasta, subject_path)
+
+    for miru in miru_Dict:
+        BLAST(miru_Dict[miru], subject_path, miru, 0.97, miru_List)
+    for spacer in spacer_Dict:
+        BLAST(spacer_Dict[spacer], subject_path, spacer, 0.94, spacer_List)
+
+    rid_duplicate_positions(miru_List)
+    rid_duplicate_positions(spacer_List)
+
+    # Create the dictionaries which will contain the miru's and spacers which match 100%, and sequences not matching exactly 100% 1
+    miru_100 = {}
+    miru_Not_100 = {}
+    for key in miru_Dict:
+        miru_100[key] = [0]
+        miru_Not_100[key] = [0]
+
+    spacer_100 = {}
+    spacer_Not_100 = {}
+    for key in spacer_Dict:
+        spacer_100[key] = [0]
+        spacer_Not_100[key] = [0]
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # for all hits that were exactly equal to the miru sequence, add the number and positions of the hit to 'miru_100' dictionary. 2
+    for hit in miru_List:
+        miruName = hit[1]
+        percentID = hit[2]
+        percentLength = hit[5]
+        if float(percentID) == 100.000 and float(percentLength) == 1.0 and not 'part' in miruName:
+            if len(miru_100[miruName]) == 1:
+                miru_100[miruName][0] += 1
+                if int(hit[8]) < int(hit[9]):
+                    miru_100[miruName].append([hit[8], hit[9]])
+                else:
+                    miru_100[miruName].append([hit[9], hit[8]])
+            else:
+                i = (len(miru_100[miruName]) - 1)
+                lowerBound = hit[8]
+                upperBound = hit[9]
+                miru_postn_list = miru_100[miruName][i]
+                if checkIfInList(lowerBound, upperBound, miru_postn_list, i) == 0:
+                    miru_100[miruName][0] += 1
+                    if int(hit[8]) < int(hit[9]):
+                        miru_100[miruName].append([hit[8], hit[9]])
+                    else:
+                        miru_100[miruName].append([hit[9], hit[8]])
+
+    # for all hits that were exactly equal to the spacer sequence, add the number and positions of the hit to 'spacer_100' dictionary. 2
+    for hit in spacer_List:
+        spacerName = hit[1]
+        percentID = hit[2]
+        percentLength = hit[5]
+        if float(percentID) == 100.00 and float(percentLength) == 1.0:
+            if len(spacer_100[spacerName]) == 1:
+                spacer_100[spacerName][0] += 1
+                if int(hit[8]) < int(hit[9]):
+                    spacer_100[spacerName].append([hit[8], hit[9]])
+                else:
+                    spacer_100[spacerName].append([hit[9], hit[8]])
+            else:
+                i = (len(spacer_100[spacerName]) - 1)
+                lowerBound = hit[8]
+                upperBound = hit[9]
+                spacer_postn_list = spacer_100[spacerName][i]
+                if checkIfInList(lowerBound, upperBound, spacer_postn_list, i) == 0:
+                    spacer_100[spacerName][0] += 1
+                    if int(hit[8]) < int(hit[9]):
+                        spacer_100[spacerName].append([hit[8], hit[9]])
+                    else:
+                        spacer_100[spacerName].append([hit[9], hit[8]])
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # Special cases of mirus 02 and 24 which have a conserved region, followed by 24 bp, then another conserved region.
+    potential_tmp = []
+    tmp_list = []
+    if args.miru2_24 == True:
+        part1_list = []
+        part2_list = []
+        for hit in miru_List:
+            if float(hit[2]) == 100.00 and float(hit[5]) == 1.0 and 'part1' in hit[1]:
+                if int(hit[8]) < int(hit[9]):
+                    part1_list.append([hit[1], [hit[8], hit[9]], 'Standard'])
+                else:
+                    part1_list.append([hit[1], [hit[9], hit[8]], 'Reverse'])
+            if float(hit[2]) == 100.00 and float(hit[5]) == 1.0 and 'part2' in hit[1]:
+                if int(hit[8]) < int(hit[9]):
+                    part2_list.append([hit[1], [hit[8], hit[9]], 'Standard'])
+                else:
+                    part2_list.append([hit[1], [hit[9], hit[8]], 'Reverse'])
+
+        for part1 in part1_list:
+            for part2 in part2_list:
+                if part1[0][0:6] == part2[0][0:6] and abs(int(part2[1][0]) - int(part1[1][1])) == 25 and part1[2] == \
+                        part2[
+                            2]:
+                    tmp_list.append([part1[0], [part1[1][0], part2[1][1]]])
+                elif part1[0][0:6] == part2[0][0:6] and abs(int(part2[1][0]) - int(part1[1][1])) == 26 and part1[2] == \
+                        part2[2]:
+                    potential_tmp.append([part1[0], [part1[1][0], part2[1][1]], 25])
+                elif part1[0][0:6] == part2[0][0:6] and abs(int(part2[1][0]) - int(part1[1][1])) == 24 and part1[2] == \
+                        part2[2]:
+                    potential_tmp.append([part1[0], [part1[1][0], part2[1][1]], 23])
+        append_Dict = {}
+        for item in tmp_list:
+            for miru in miru_100:
+                i = (len(miru_100[miru]) - 1)
+                lowerBound = item[1][0]
+                upperBound = item[1][1]
+                lyst = miru_100[miru][i]
+                if checkIfInList(lowerBound, upperBound, lyst, i) == 0:
+                    if not item[0] in miru_100:
+                        append_Dict[item[0]] = [1, item[1]]
+                    else:
+                        if not item[0] in append_Dict:
+                            append_Dict[item[0]] = [1, item[1]]
+                        elif item[0] in append_Dict:
+                            if not item[1] in append_Dict[item[0]]:
+                                append_Dict[item[0]][0] = append_Dict[item[0][0:6]][0] + 1
+                                append_Dict[item[0]].append(item[1])
+                else:
+                    potential_tmp.append(item)
+        for item in append_Dict:
+            miru_100[item] = append_Dict[item]
+    else:
+        pass
+
+    # This checks the 'not 100%' matches (97% < miru < 100%) to see if they are already in the miru_100 list under a different region (some miru sequences have a high degree of similarity naturally); it also checks against every other miru so that none overlap with any of the others already in the 100% match list. 3
+    tmp_list = []
+    for hit in miru_List:
+        sub_Miru = hit[1]
+        percent_ID = hit[2]
+        percent_Length = hit[5]
+        start_Pos = hit[8]
+        end_Pos = hit[9]
+        if float(percent_ID) != 100.00 and float(percent_Length) == 1.0 and not 'part' in sub_Miru:
+            if int(start_Pos) > int(end_Pos):
+                tmp_list.append([sub_Miru, [end_Pos, start_Pos]])
+            else:
+                tmp_list.append([sub_Miru, [start_Pos, end_Pos]])
+        elif float(percent_ID) == 100.00 and float(percent_Length) != 1.0 and not 'part' in sub_Miru:
+            if int(start_Pos) > int(end_Pos):
+                tmp_list.append([sub_Miru, [end_Pos, start_Pos]])
+            else:
+                tmp_list.append([sub_Miru, [start_Pos, end_Pos]])
+    append_Dict = {}
+    for item in tmp_list:
+        sub_Miru = item[0]
+        sub_postns = item[1]
+        check = 0
+        for miru in miru_100:
+            check += checkOverlap(sub_postns, miru_100[miru])
+        if check == 0:
+            if not sub_Miru in miru_100:
+                append_Dict[sub_Miru] = [1, sub_postns]
+            else:
+                if not sub_Miru in append_Dict:
+                    append_Dict[sub_Miru] = [1, sub_postns]
+                elif sub_Miru in append_Dict:
+                    if not sub_postns in append_Dict[sub_Miru]:
+                        append_Dict[sub_Miru][0] += 1
+                        append_Dict[sub_Miru].append(sub_postns)
+
+    for item in append_Dict:
+        miru_Not_100[item] = append_Dict[item]
+
+    # This checks the 'not 100%' matches (95% < miru) to see if they are already in the spacer_100 list under a different region (some sequences have a high degree of similarity naturally); it also checks against every other spacer so that none overlap with any of the others already in the 100% match list. 3
+    tmp_list2 = []
+    for hit in spacer_List:
+        sub_Spacer = hit[1]
+        percent_ID = hit[2]
+        percent_Length = hit[5]
+        start_Pos = hit[8]
+        end_Pos = hit[9]
+        evalue = hit[10]
+        if float(percent_ID) != 100 or float(percent_Length) != 1.0:
+            if int(start_Pos) > int(end_Pos):
+                tmp_list2.append([sub_Spacer, [end_Pos, start_Pos, evalue]])
+            else:
+                tmp_list2.append([sub_Spacer, [start_Pos, end_Pos, evalue]])
+    append_Dict2 = {}
+    for item in tmp_list2:
+        sub_Spacer = item[0]
+        sub_postns = item[1]
+        check = 0
+        for spacer in spacer_100:
+            check += checkOverlap(sub_postns, spacer_100[spacer])
+        if check == 0:
+            if not sub_Spacer in spacer_100:
+                append_Dict2[sub_Spacer] = [1, sub_postns]
+            else:
+                if not sub_Spacer in append_Dict2:
+                    append_Dict2[sub_Spacer] = [1, sub_postns]
+                elif sub_Spacer in append_Dict2:
+                    if not sub_postns in append_Dict[sub_Spacer]:
+                        append_Dict2[sub_Spacer][0] = append_Dict2[sub_Spacer][0] + 1
+                        append_Dict2[sub_Spacer].append(sub_postns)
+
+    for item in append_Dict2:
+        spacer_Not_100[item] = append_Dict2[item]
+
+    append_Dict2 = {}
+    for key in spacer_Not_100:
+        try:
+            min_e = min(float(spacer_Not_100[key][j][2]) for j in range(1, len(spacer_Not_100[key])))
+            if len(spacer_Not_100[key]) > 1:
+                for i in range(1, len(spacer_Not_100[key])):
+                    if spacer_Not_100[key][i][2] == str(min_e):
+                        if len(spacer_100[key]) == 1:
+                            if key in append_Dict2:
+                                append_Dict2[key] += [spacer_Not_100[key][i]]
+                            else:
+                                append_Dict2[key] = [spacer_Not_100[key][i]]
+        except ValueError:
+            continue
+
+    for key in append_Dict2:
+        spacer_100[key] = [len(append_Dict2[key])]
+        for i in range(len(append_Dict2[key])):
+            spacer_100[key] += [append_Dict2[key][i]]
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # This establishes the final_Miru list 4
+    final_Miru = {}
+    for item in miru_100:
+        miru = item[0:6]
+        for i in range(1, len(miru_100[item])):
+            if miru in final_Miru:
+                if not miru_100[item][i] in final_Miru[miru]:
+                    final_Miru[miru][0] += 1
+                    final_Miru[miru].append(miru_100[item][i])
+            else:
+                final_Miru[miru] = [1, miru_100[item][i]]
+    for item in final_Miru:
+        for i in range(1, len(final_Miru[item])):
+            for j in range(1, len(final_Miru[item])):
+                if i != j:
+                    if final_Miru[item][i] == [0, 0] or final_Miru[item][j] == [0, 0]:
+                        continue
+                    elif final_Miru[item][i] == final_Miru[item][j]:
+                        final_Miru[item][j] = [0, 0]
+                        final_Miru[item][0] -= 1
+                    elif final_Miru[item][i][0] == final_Miru[item][j][0] or final_Miru[item][i][1] == \
+                            final_Miru[item][j][
+                                1]:
+                        if (int(final_Miru[item][i][1]) - int(final_Miru[item][i][0])) > (
+                                    int(final_Miru[item][j][1]) - int(final_Miru[item][j][0])):
+                            final_Miru[item][j] = [0, 0]
+                            final_Miru[item][0] -= 1
+                        else:
+                            final_Miru[item][i] = [0, 0]
+                            final_Miru[item][0] -= 1
+    for item in final_Miru:
+        for subitem in final_Miru[item]:
+            if subitem == [0, 0]:
+                final_Miru[item].remove(subitem)
+    for item in miru_Dict:
+        if not item[0:6] in final_Miru:
+            final_Miru[item[0:6]] = [0]
+
+    # This establishes the binary Spoligo list and appends it to the existing multi-fasta sequence binary spoligo record. 4
+    binary_Spoligo = {}
+    for item in spacer_100:
+        if len(spacer_100[item]) == 1:
+            binary_Spoligo[item] = '0'
+        else:
+            binary_Spoligo[item] = '1'
+
+    for item in binary_Spoligo:
+        if item in multiFastaSpoligo:
+            if multiFastaSpoligo[item] == '0':
+                multiFastaSpoligo[item] = binary_Spoligo[item]
+        elif not item in multiFastaSpoligo:
+            multiFastaSpoligo[item] = binary_Spoligo[item]
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # This checks that the 'not 100%' miru hits are sequential to the 100% miru hits.  If no hits were 100% to begin with, then it appends the 'not 100%' hit to the list. 5
+    to_be_added_to_final = {}
+    for item in miru_Not_100:
+        for key in final_Miru:
+            if item[0:6] == key:
+                if len(final_Miru[key]) > 1 and len(miru_Not_100[item]) > 1:
+                    for i in range(1, len(final_Miru[key])):
+                        for j in range(1, len(miru_Not_100[item])):
+                            if int(miru_Not_100[item][j][0]) - int(final_Miru[key][i][1]) <= 21 and int(
+                                    miru_Not_100[item][j][0]) - int(final_Miru[key][i][1]) > 0:
+                                if not miru_Not_100[item][j] in final_Miru[key]:
+                                    if key not in to_be_added_to_final:
+                                        to_be_added_to_final[key] = [1, miru_Not_100[item][j]]
+                                    else:
+                                        to_be_added_to_final[key][0] += 1
+                                        to_be_added_to_final[key] += [miru_Not_100[item][j]]
+                            elif int(final_Miru[key][i][0]) - int(miru_Not_100[item][j][1]) <= 21 and int(
+                                    final_Miru[key][i][0]) - int(miru_Not_100[item][j][1]) > 0:
+                                if not miru_Not_100[item][j] in final_Miru[key]:
+                                    if key not in to_be_added_to_final:
+                                        to_be_added_to_final[key] = [1, miru_Not_100[item][j]]
+                                    else:
+                                        to_be_added_to_final[key][0] += 1
+                                        to_be_added_to_final[key] += [miru_Not_100[item][j]]
+                if len(final_Miru[key]) == 1:
+                    if key not in to_be_added_to_final and len(miru_Not_100[item]) > 1:
+                        to_be_added_to_final[key] = miru_Not_100[item]
+                    elif key in to_be_added_to_final and len(miru_Not_100[item]) > 1:
+                        to_be_added_to_final[key] += miru_Not_100[item]
+        for add_key in to_be_added_to_final:
+            if add_key == item[0:6]:
+                for i in range(1, len(to_be_added_to_final[add_key])):
+                    for j in range(1, len(miru_Not_100[item])):
+                        if int(miru_Not_100[item][j][0]) - int(to_be_added_to_final[add_key][i][1]) <= 21 and int(
+                                miru_Not_100[item][j][0]) - int(to_be_added_to_final[add_key][i][1]) > 0:
+                            if not miru_Not_100[item][j] in to_be_added_to_final[add_key]:
+                                to_be_added_to_final[add_key][0] += 1
+                                to_be_added_to_final[add_key] += [miru_Not_100[item][j]]
+                        elif int(to_be_added_to_final[add_key][i][0]) - int(miru_Not_100[item][j][1]) <= 21 and int(
+                                to_be_added_to_final[add_key][i][0]) - int(miru_Not_100[item][j][1]) > 0:
+                            if not miru_Not_100[item][j] in to_be_added_to_final[add_key]:
+                                to_be_added_to_final[add_key][0] += 1
+                                to_be_added_to_final[add_key] += [miru_Not_100[item][j]]
+    for miru in to_be_added_to_final:
+        for key in final_Miru:
+            if miru == key:
+                final_Miru[key][0] += to_be_added_to_final[miru][0]
+                final_Miru[key] += to_be_added_to_final[miru][1:]
+
+    final_Miru2 = {}
+    for key in final_Miru:
+        if final_Miru[key] == [0]:
+            pass
+        else:
+            final_Miru2[key] = final_Miru[key]
+    final_Miru = final_Miru2
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # Check two miru lengths away from the miru region to see if there is a partial hit seqential to the sequence 6
+    partial_List = []
+
+    # Sort the final list so that the miru regions are in ascending order
+    for miru in final_Miru:
+        sort_Miru = []
+        for i in range(1, len(final_Miru[miru])):
+            start_Pos = int(final_Miru[miru][i][0])
+            end_Pos = int(final_Miru[miru][i][1])
+            sort_Miru.append([start_Pos, end_Pos])
+        sort_Miru.sort()
+        for i in range(1, len(final_Miru[miru])):
+            start_Pos_Str = str(sort_Miru[i - 1][0])
+            end_Pos_Str = str(sort_Miru[i - 1][1])
+            final_Miru[miru][i] = [start_Pos_Str, end_Pos_Str]
+
+    for miru in final_Miru:
+        for key in miru_Dict:
+            if str(miru) in key and not 'part' in key:
+                len_Miru = len(miru_Dict[key])
+                lower_Bound = 0
+                upper_Bound = len(subject_fasta)
+                if int(final_Miru[miru][1][0]) < int(final_Miru[miru][1][1]):
+                    # Make sure the miru regions are at least 2 lengths from the edge of contig, otherwise, indeterminate 
+                    if int(final_Miru[miru][1][0]) - int(2 * len_Miru) > 0:
+                        lower_Bound = int(final_Miru[miru][1][0]) - int(2 * len_Miru)
+                    else:
+                        if 'Indeterminate' in final_Miru[miru][1]:
+                            pass
+                        else:
+                            final_Miru[miru][1].append('Indeterminate')
+                else:
+                    if int(final_Miru[miru][1][1]) - int(2 * len_Miru) > 0:
+                        lower_Bound = int(final_Miru[miru][1][1]) - int(2 * len_Miru)
+                    else:
+                        if 'Indeterminate' in final_Miru[miru][1]:
+                            pass
+                        else:
+                            final_Miru[miru][1].append('Indeterminate')
+                if int(final_Miru[miru][-1][0]) < int(final_Miru[miru][-1][1]):
+                    if len(subject_fasta) - (int(final_Miru[miru][-1][1]) + int(2 * len_Miru)) > 0:
+                        upper_Bound = int(final_Miru[miru][-1][1]) + int(2 * len_Miru)
+                    else:
+                        if 'Indeterminate' in final_Miru[miru][-1]:
+                            pass
+                        else:
+                            final_Miru[miru][-1].append('Indeterminate')
+                else:
+                    if len(subject_fasta) - (int(final_Miru[miru][-1][0]) + int(2 * len_Miru)) > 0:
+                        upper_Bound = int(final_Miru[miru][-1][0]) + int(2 * len_Miru)
+                    else:
+                        if 'Indeterminate' in final_Miru[miru][-1]:
+                            pass
+                        else:
+                            final_Miru[miru][-1].append('Indeterminate')
+                if lower_Bound == 0 and upper_Bound == 0:
+                    continue
+                else:
+                    BLAST(miru_Dict[key], subject_path, miru, 0.4, partial_List, lower_Bound, upper_Bound)
+            for item in partial_List:
+                if len(item) < 12:
+                    item.insert(10, lower_Bound)
+        if is_number(str(final_Miru[miru][1])) == 1:
+            final_Miru[miru].insert(1, 0)
+
+    rid_duplicate_positions(partial_List)
+    for item in partial_List:
+        if int(item[8]) > int(item[9]):
+            tmp = item[8]
+            item[8] = item[9]
+            item[9] = tmp
+
+    # Get rid of values that overlap in the partial list and keep only those with smallest e-value, and/or highest %ID
+    partial_keep2 = []
+    new_List = []
+    for miru in miru_Order:
+        partial_List_prune = []
+        for item in partial_List:
+            if miru in item[1]:
+                partial_List_prune.append(item)
+        partial_List_prune.sort(key=lambda x: float(x[11]))
+        partial_keep = []
+        for i in range(len(partial_List_prune)):
+            if len(partial_List_prune) == 1:
+                partial_keep.append(partial_List_prune[i])
+            keep_track = []
+            for j in range(len(partial_List_prune)):
+                if i < j:
+                    position = partial_List_prune[j]
+                    if position[8:10] == ['0', '0'] or partial_List_prune[i][8:10] == ['0', '0']:
+                        continue
+                    # elif checkIfInRange([int(partial_List_prune[i][8])+int(partial_List_prune[i][10]), int(partial_List_prune[i][9])+int(partial_List_prune[i][10])],
+                    #                    [int(position[8])+int(position[10]), int(position[9])+int(position[10])]) == 1:
+                    elif checkIfInRange([int(partial_List_prune[i][8]), int(partial_List_prune[i][9])],
+                                        [int(position[8]), int(position[9])]) == 1:
+                        if float(partial_List_prune[i][11]) < float(position[11]):
+                            keep_track.append([j,
+                                               1])  # This keeps track of the index in the original list and whether the current item's e-value was smaller
+                        elif float(partial_List_prune[i][11]) > float(position[11]):
+                            keep_track.append([j,
+                                               2])  # This keeps track of the index in the original list and whether the current item's e-value was larger
+                        elif float(partial_List_prune[i][11]) == float(position[11]):
+                            if float(partial_List_prune[i][5]) > float(position[5]):
+                                keep_track.append([j,
+                                                   1])  # This keeps track of the index in the original list and whether the current item's %ID was larger
+                            elif float(partial_List_prune[i][5]) < float(position[5]):
+                                keep_track.append([j,
+                                                   2])  # This keeps track of the index in the original list and whether the current item's %ID was smaller
+                            elif float(partial_List_prune[i][5]) == float(position[5]):
+                                keep_track.append(
+                                    [j, 1])  # If all other values were the same (e-val, %ID), keep the current value
+            tracker = 0
+            for index in keep_track:
+                if index[1] == 2:
+                    tracker = 1
+                elif index[1] == 1:
+                    partial_List_prune[index[0]] = [
+                                                       '0'] * 11  # Get rid of items that overlap and have a larger e-val or smaller %ID than current item
+            if tracker == 1:
+                partial_List_prune[i] = ['0'] * 11
+            elif tracker == 0:
+                partial_keep.append(partial_List_prune[i])
+                partial_List_prune[i] = ['0'] * 11
+        for item in partial_keep:
+            partial_keep2.append(item)
+    for item in partial_keep2:
+        if not item[1] == '0':
+            new_List.append(item)
+
+    rid_duplicate_positions(new_List)
+    partial_List = new_List
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # Get the last partial miru in case it exists, and if it does, add it (as long as it does not overlap with already existing). 7
+    partial_add = {}
+    for item in partial_List:
+        miruName = str(item[1][0:6])
+        if float(item[5]) < 1.00:
+            if item[9] > item[8]:
+                checkItem = [str(int(item[8])), str(int(item[9]))]
+            else:
+                checkItem = [str(int(item[9])), str(int(item[8]))]
+            if float(item[5]) >= 0.5:
+                if checkOverlap(checkItem, final_Miru[miruName][1:]) == 0:
+                    partial_add
+                    final_Miru[miruName].append([str(int(item[8])), str(int(item[9])), item[5]])
+                    final_Miru[miruName][1] = final_Miru[miruName][1] + 1
+
+    # Get rid of any duplicate values in the final list
+    for miru in final_Miru:
+        for i in range(2, len(final_Miru[miru]) - 1):
+            for j in range(2, len(final_Miru[miru])):
+                if i < j:
+                    if checkIfInRange([int(final_Miru[miru][i][0]), int(final_Miru[miru][i][1])],
+                                      [int(final_Miru[miru][j][0]), int(final_Miru[miru][j][1])]) == 1:
+                        if len(final_Miru[miru][j]) == 2:
+                            final_Miru[miru][0] = final_Miru[miru][0] - 1
+                        elif len(final_Miru[miru][j]) == 3:
+                            final_Miru[miru][1] = final_Miru[miru][1] - 1
+                        final_Miru[miru][j] = ['0', '0']
+                elif i == j:
+                    pass
+        if ['0', '0'] in final_Miru[miru]:
+            final_Miru[miru].remove(['0', '0'])
+    try:
+        final_Miru['QUB4156'] = final_Miru['QUB415']
+        del final_Miru['QUB415']
+    except KeyError:
+        final_Miru['QUB4156'] = 0
+    for item in miru_Order:
+        try:
+            final_Miru[item]
+        except KeyError:
+            final_Miru[item] = 0
+
+    for item in final_Miru:
+        if final_Miru[item] != 0:
+            if item in multiFastaMIRU:
+                multiFastaMIRU[item][0] += final_Miru[item][0]
+                multiFastaMIRU[item][1] += final_Miru[item][1]
+                multiFastaMIRU[item] += final_Miru[item][2:]
+                multiFastaMIRU[item] += [fasta_Header]
+            elif not item in multiFastaMIRU:
+                multiFastaMIRU[item] = final_Miru[item]
+                multiFastaMIRU[item] += [fasta_Header]
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+    # This section determines whether the isolate is M. canetti or not 8
+    hsp65_List = []
+    BLAST(hsp65['hsp65'], subject_path, 'hsp65', 0.97, hsp65_List)
+    try:
+        hsp65Frag = hsp65_List[0]
+        lower = int(hsp65Frag[8])
+        upper = int(hsp65Frag[9])
+        canettiiCheckSeq = subject_fasta[lower:upper]
+        if len(re.findall('GCGC', str(canettiiCheckSeq))) == 3:
+            canetti_Check = 3
+    except IndexError:
+        continue
+
+    progress += 1
+    update_progress(progress, progress_length)
+
+miruReadout = ''
+for item in miru_Order:
+    strseq = ''
+    try:
+        strseq = (str(item), str(multiFastaMIRU[item]))
+        extra = 0
+        indeterminate = ''
+        if float(multiFastaMIRU[item][1]) > 0.5 and args.partial == False:
+            extra = int(format(float(multiFastaMIRU[item][1]), '.0f'))
+        if 'Indeterminate' in multiFastaMIRU[item]:
+            indeterminate = '?'
+        miru_tally = int(multiFastaMIRU[item][0]) + extra
+        miruReadout += str(MIRU_10_and_above_dict[miru_tally]) + str(indeterminate)
+        printToFile('\t'.join(strseq), output_path + args.run_name + ".positions.tsv", last=1)
+    except KeyError:
+        strseq = (str(item))
+        miruReadout += '-'
+        printToFile(strseq, output_path + args.run_name + ".positions.tsv", last=1)
+
+# This converts the final binary code from the multi-fasta into an octal code for use in lineage determination
+final_Spoligo = []
+fourteen_Plus1 = []
+
+octal = ''
+for i in range(0, len(spacer_Order)):
+    if i % 3 < 2:
+        octal += str(multiFastaSpoligo[spacer_Order[i]])
+    elif i % 3 == 2:
+        octal += str(multiFastaSpoligo[spacer_Order[i]])
+        fourteen_Plus1.append(octal)
+        octal = ''
+fourteen_Plus1.append(octal)
+
+for item in fourteen_Plus1:
+    try:
+        final_Spoligo.append(octal_code[item])
+    except:
+        final_Spoligo.append(item)
+
+file_flag_run = (str(args.fasta_file), str(flags), str(args.run_name))
+printToFile('\t'.join(file_flag_run), output_path + args.run_name + ".summary.tsv")
+final_spol = ''
+for item in final_Spoligo:
+    final_spol += item
+final_spol = final_spol.replace(" ", "")
+print("\nSpoligotype\t", final_spol)
+printToFile(final_spol, output_path + args.run_name + ".summary.tsv")
+
+# This section contains the rules for lineage-typing based on Spoligo results and Miru region Miru24 from TBInsight. 
+lineage = 'Cannot be determined'
+miru24number = 0
+if miruReadout[6] == '-':
+    miru24number = 0
+elif miruReadout[6] == '1':
+    miru24number = 1
+else:
+    miru24number = 2
+
+if multiFastaSpoligo['spacers_str01'] == '0' and multiFastaSpoligo['spacers_str02'] == '0' and multiFastaSpoligo[
+    'spacers_str03'] == '0' and multiFastaSpoligo['spacers_str04'] == '0' and multiFastaSpoligo[
+    'spacers_str05'] == '0' and multiFastaSpoligo['spacers_str06'] == '0' and multiFastaSpoligo[
+    'spacers_str07'] == '0' and multiFastaSpoligo['spacers_str08'] == '0' and multiFastaSpoligo[
+    'spacers_str09'] == '0' and multiFastaSpoligo['spacers_str10'] == '0' and multiFastaSpoligo[
+    'spacers_str11'] == '0' and multiFastaSpoligo['spacers_str12'] == '0' and multiFastaSpoligo[
+    'spacers_str13'] == '0' and multiFastaSpoligo['spacers_str14'] == '0' and multiFastaSpoligo[
+    'spacers_str15'] == '0' and multiFastaSpoligo['spacers_str16'] == '0' and multiFastaSpoligo[
+    'spacers_str17'] == '0' and multiFastaSpoligo['spacers_str18'] == '0' and multiFastaSpoligo[
+    'spacers_str19'] == '0' and multiFastaSpoligo['spacers_str20'] == '0' and multiFastaSpoligo[
+    'spacers_str21'] == '0' and multiFastaSpoligo['spacers_str22'] == '0' and multiFastaSpoligo[
+    'spacers_str23'] == '0' and multiFastaSpoligo['spacers_str24'] == '0' and multiFastaSpoligo[
+    'spacers_str25'] == '0' and multiFastaSpoligo['spacers_str26'] == '0' and multiFastaSpoligo[
+    'spacers_str27'] == '0' and multiFastaSpoligo['spacers_str28'] == '0' and multiFastaSpoligo[
+    'spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and multiFastaSpoligo[
+    'spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0' and multiFastaSpoligo[
+    'spacers_str33'] == '0' and multiFastaSpoligo['spacers_str34'] == '0':
+    lineage = 'East Asian'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str25'] == '1' or multiFastaSpoligo['spacers_str26'] == '1' or multiFastaSpoligo[
+        'spacers_str27'] == '1' or multiFastaSpoligo['spacers_str28'] == '1':
+        if multiFastaSpoligo['spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and \
+                        multiFastaSpoligo['spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0' and \
+                        multiFastaSpoligo['spacers_str33'] == '0' and multiFastaSpoligo['spacers_str34'] == '0' and \
+                        multiFastaSpoligo['spacers_str35'] == '0' and multiFastaSpoligo[
+            'spacers_str36'] == '0' and miru24number > 1:
+            lineage = 'Indo-Oceanic'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str33'] == '1' or multiFastaSpoligo['spacers_str34'] == '1' or multiFastaSpoligo[
+        'spacers_str35'] == '1' or multiFastaSpoligo['spacers_str36'] == '1':
+        if multiFastaSpoligo['spacers_str25'] == '1' or multiFastaSpoligo['spacers_str26'] == '1' or multiFastaSpoligo[
+            'spacers_str27'] == '1' or multiFastaSpoligo['spacers_str28'] == '1':
+            if multiFastaSpoligo['spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and \
+                            multiFastaSpoligo['spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0' and \
+                            multiFastaSpoligo['spacers_str34'] == '0':
+                lineage = 'Indo-Oceanic'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str33'] == '1' or multiFastaSpoligo['spacers_str34'] == '1' or multiFastaSpoligo[
+        'spacers_str35'] == '1' or multiFastaSpoligo['spacers_str36'] == '1':
+        if multiFastaSpoligo['spacers_str03'] == '0' and multiFastaSpoligo['spacers_str09'] == '0' and \
+                        multiFastaSpoligo['spacers_str16'] == '0' and multiFastaSpoligo['spacers_str38'] == '1' and \
+                        multiFastaSpoligo['spacers_str39'] == '0' and multiFastaSpoligo['spacers_str40'] == '0' and \
+                        multiFastaSpoligo['spacers_str41'] == '0' and multiFastaSpoligo['spacers_str42'] == '0' and \
+                        multiFastaSpoligo['spacers_str43'] == '0':
+            lineage = 'M. bovis'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str03'] == '0' and multiFastaSpoligo['spacers_str09'] == '0' and multiFastaSpoligo[
+        'spacers_str16'] == '0' and multiFastaSpoligo['spacers_str38'] == '1' and multiFastaSpoligo[
+        'spacers_str39'] == '0' and multiFastaSpoligo['spacers_str40'] == '0' and multiFastaSpoligo[
+        'spacers_str41'] == '0' and multiFastaSpoligo['spacers_str42'] == '0' and multiFastaSpoligo[
+        'spacers_str43'] == '0' and multiFastaSpoligo['spacers_str33'] == '0' and multiFastaSpoligo[
+        'spacers_str34'] == '0' and multiFastaSpoligo['spacers_str35'] == '0' and multiFastaSpoligo[
+        'spacers_str36'] == '0' and miru24number > 1:
+        lineage = 'M. bovis'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str08'] == '0' and multiFastaSpoligo['spacers_str09'] == '0' and multiFastaSpoligo[
+        'spacers_str10'] == '0' and multiFastaSpoligo['spacers_str11'] == '0' and multiFastaSpoligo[
+        'spacers_str12'] == '0' and multiFastaSpoligo['spacers_str37'] == '0' and multiFastaSpoligo[
+        'spacers_str38'] == '0' and multiFastaSpoligo['spacers_str39'] == '0' and miru24number > 1:
+        lineage = 'M. Africanum, West African 1'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str07'] == '0' and multiFastaSpoligo['spacers_str08'] == '0' and multiFastaSpoligo[
+        'spacers_str09'] == '0' and multiFastaSpoligo['spacers_str39'] == '0' and miru24number > 1:
+        lineage = 'M. Africanum, West African 2'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str04'] == '0' and multiFastaSpoligo['spacers_str05'] == '0' and multiFastaSpoligo[
+        'spacers_str06'] == '0' and multiFastaSpoligo['spacers_str07'] == '0' and multiFastaSpoligo[
+        'spacers_str23'] == '0' and multiFastaSpoligo['spacers_str24'] == '0' and multiFastaSpoligo[
+        'spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and multiFastaSpoligo[
+        'spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0':
+        lineage = 'East-African Indian'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str29'] == '0' or multiFastaSpoligo['spacers_str30'] == '0' or multiFastaSpoligo[
+        'spacers_str31'] == '0' or multiFastaSpoligo['spacers_str32'] == '0':
+        if multiFastaSpoligo['spacers_str33'] == '1' or multiFastaSpoligo['spacers_str34'] == '1' or multiFastaSpoligo[
+            'spacers_str35'] == '1' or multiFastaSpoligo['spacers_str36'] == '1':
+            if multiFastaSpoligo['spacers_str04'] == '0' and multiFastaSpoligo['spacers_str05'] == '0' and \
+                            multiFastaSpoligo['spacers_str06'] == '0' and multiFastaSpoligo['spacers_str07'] == '0' and \
+                            multiFastaSpoligo['spacers_str23'] == '0' and multiFastaSpoligo[
+                'spacers_str24'] == '0' and miru24number <= 1:
+                lineage = 'East-African Indian'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and multiFastaSpoligo[
+        'spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0' and multiFastaSpoligo[
+        'spacers_str34'] == '0' and multiFastaSpoligo['spacers_str33'] == '0' and multiFastaSpoligo[
+        'spacers_str34'] == '0' and multiFastaSpoligo['spacers_str35'] == '0' and multiFastaSpoligo[
+        'spacers_str36'] == '0' and miru24number > 1:
+        lineage = 'Indo-Oceanic'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str33'] == '1' or multiFastaSpoligo['spacers_str34'] == '1' or multiFastaSpoligo[
+        'spacers_str35'] == '1' or multiFastaSpoligo['spacers_str36'] == '1':
+        if multiFastaSpoligo['spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and \
+                        multiFastaSpoligo['spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0' and \
+                        multiFastaSpoligo['spacers_str34'] == '0':
+            lineage = 'Indo-Oceanic'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str29'] == '0' and multiFastaSpoligo['spacers_str30'] == '0' and multiFastaSpoligo[
+        'spacers_str31'] == '0' and multiFastaSpoligo['spacers_str32'] == '0' and multiFastaSpoligo[
+        'spacers_str33'] == '0' and multiFastaSpoligo['spacers_str34'] == '0' and multiFastaSpoligo[
+        'spacers_str35'] == '0' and multiFastaSpoligo['spacers_str36'] == '0':
+        lineage = 'Euro-American'
+if lineage == 'Cannot be determined':
+    if multiFastaSpoligo['spacers_str29'] == '1' or multiFastaSpoligo['spacers_str30'] == '1' or multiFastaSpoligo[
+        'spacers_str31'] == '1' or multiFastaSpoligo['spacers_str32'] == '1':
+        if multiFastaSpoligo['spacers_str33'] == '0' and multiFastaSpoligo['spacers_str34'] == '0' and \
+                        multiFastaSpoligo['spacers_str35'] == '0' and multiFastaSpoligo['spacers_str36'] == '0':
+            lineage = 'Euro-American'
+zero_spacers = 0
+for spacer in spacer_Dict:
+    if multiFastaSpoligo[spacer] == '0':
+        zero_spacers += 1
+if zero_spacers == 43:
+    lineage = 'Cannot be determined'
+if canetti_Check == 3:
+    lineage = 'M. canettii'
+
+# Take into account whether the user specified MIRU12 or MIRU24, then output results to screen. 
+if args.miru24 == False:
+    miruReadout = miruReadout[0:12]
+print("MIRUtype\t", miruReadout)
+printToFile(miruReadout, output_path + args.run_name + ".summary.tsv")
+print("Lineage\t", lineage)
+printToFile(lineage, output_path + args.run_name + ".summary.tsv", last=1)
+
+print("*******")
+print("These summarized results can be found in: " + str(output_path + args.run_name + ".summary.tsv"))
+print("More detailed results can be found in: " + str(output_path + args.run_name + ".positions.tsv"))

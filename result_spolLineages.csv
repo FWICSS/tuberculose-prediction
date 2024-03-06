@@ -1,0 +1,21 @@
+StrainID;Spoligo Binary;Spoligo Octal;MIRU-VNTR;Lineage (binary rules);SubLineage (binary rules);Other candidate lineages;Lineage (decision tree);Lineage (evolutionary algorithm);Curated lineage (SITVIT2);SNP-based lineage;MIRU-VNTR based lineage (RuleTB);SIT;Country Distribution (SITVIT2)
+GCF_009730215.1_ASM973021v1_genomic;nnonnnnoonnnnnnnnnnoonnnoooooooooonnnnnnnnn;'674777470003771;'ND;Unknown;Unknown;[];ND;ND;ND;ND;ND;ND;ND
+GCF_033124885.1_ASM3312488v1_genomic;nnonnnnoooooooooooooooooonnnoooononnnnnnnnn;'674000003413771;'ND;EAI;EAI2-Nonthaburi;[Manu1 EAI2 EAI5];ND;ND;ND;ND;ND;ND;ND
+GCF_001708265.1_ASM170826v1_genomic;oooooooooooooooooooooooooooooooooonnnnnnnnn;'000000000003771;'ND;Beijing;Beijing;[];ND;ND;ND;ND;ND;ND;ND
+GCF_014899965.1_ASM1489996v1_genomic;nnonnnnnnnnnnnnnnnnoonnnnnnnoooononnnnnnnnn;'677777477413771;'ND;EAI;EAI2-Manila;[Manu1 EAI2 EAI5];ND;ND;ND;ND;ND;ND;ND
+GCF_014900295.1_ASM1490029v1_genomic;nnnnnnnoonnnnnnnnnnnnnnnnnnnooonoooonnnnnnn;'774777777420771;'ND;Ural;Ural-1;[H3];ND;ND;ND;ND;ND;ND;ND
+GCF_017901095.1_ASM1790109v1_genomic;nnnnnnnnnnnnnnnnnnnoonnnnnnnnnnnoooonnnnnnn;'777777477760771;'ND;T;T-H37Rv;[T1];ND;ND;ND;ND;ND;ND;ND
+GCF_030566675.1_ASM3056667v1_genomic;noonnnnnnnnnnnnnnnononnnnnnnoooonoooooooooo;'477777277410000;'ND;EAI;EAI8-MDG;[EAI5];ND;ND;ND;ND;ND;ND;ND
+GCF_014900275.1_ASM1490027v1_genomic;nnnnnnnoonnnnnnnnnnnnnnnnnnnooonoooonnnnnnn;'774777777420771;'ND;Ural;Ural-1;[H3];ND;ND;ND;ND;ND;ND;ND
+GCF_002116835.1_ASM211683v1_genomic;oooooooooooooooooooooooooooooooooonnnnnonnn;'000000000003731;'ND;Beijing;Beijing;[];ND;ND;ND;ND;ND;ND;ND
+GCF_014899985.1_ASM1489998v1_genomic;nnonnnnnoooooooonnnoonnnnnnnoooononnnnnnnnn;'676003477413771;'ND;EAI;EAI2-Manila;[Manu1 EAI2 EAI5];ND;ND;ND;ND;ND;ND;ND
+GCF_000195955.2_ASM19595v2_genomic;nnnnnnnnnnnnnnnnnnnoonnnnnnnnnnnoooonnnnnnn;'777777477760771;'ND;T;T-H37Rv;[T1];ND;ND;ND;ND;ND;ND;ND
+GCF_030566105.1_ASM3056610v1_genomic;nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnoooonnnnnnn;'777777777760771;'ND;T;T1;[];ND;ND;ND;ND;ND;ND;ND
+GCF_014900555.1_ASM1490055v1_genomic;nnnoooonnnnnnnnnnnnoooooooooooooooonnnnnnnn;'703777400001771;'ND;CAS;CAS;[];ND;ND;ND;ND;ND;ND;ND
+GCF_002116775.1_ASM211677v1_genomic;oooooooooooooooooooooooooooooooooonnnnnonnn;'000000000003731;'ND;Beijing;Beijing;[];ND;ND;ND;ND;ND;ND;ND
+GCF_022870365.1_ASM2287036v1_genomic;nnnoooonnnnnnnnnnnnnnnoooooooooooooonnnnnnn;'703777740000771;'ND;CAS;CAS;[];ND;ND;ND;ND;ND;ND;ND
+GCF_014900215.1_ASM1490021v1_genomic;nnnnnnnoonnnnnnnnnnnnnnnnnnnooonoooonnnnnnn;'774777777420771;'ND;Ural;Ural-1;[H3];ND;ND;ND;ND;ND;ND;ND
+GCF_014900255.1_ASM1490025v1_genomic;nnnnnnnoonnnnnnnnnnnnnnnnnnnooonoooonnnnnnn;'774777777420771;'ND;Ural;Ural-1;[H3];ND;ND;ND;ND;ND;ND;ND
+GCF_963525475.1_MtbRf_genomic;nnnnnnnnnnnnnnnnnnnoonnnnnnnnnnnoooonnnnnnn;'777777477760771;'ND;T;T-H37Rv;[T1];ND;ND;ND;ND;ND;ND;ND
+GCF_033125685.1_ASM3312568v1_genomic;nnonnnnoooooooooooooooooonooooooooooooonnnn;'674000002000071;'ND;AFRI;AFRI;[];ND;ND;ND;ND;ND;ND;ND
+GCF_000277735.2_ASM27773v2_genomic;nnnnnnnnnnnnnnnnnnnoonnnnnnnnnnnoooonnnnnnn;'777777477760771;'ND;T;T-H37Rv;[T1];ND;ND;ND;ND;ND;ND;ND
